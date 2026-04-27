@@ -13,83 +13,153 @@ FIXED_APP_ID = "e0cf1cac638f4a2da01973073a1ceb06"
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("Technical LLD Master v14.0 (Modular Edition)")
+        root.title("Technical LLD Master v15.0 (Recursive Architecture)")
         root.geometry("750x650")
         
         self.ai = DocEngine(FIXED_API_KEY, FIXED_APP_ID)
         self.exporter = ExportEngine()
 
         f = ttk.Frame(root, padding=25); f.pack(fill="both", expand=True)
-        ttk.Label(f, text="Source Folder:").pack(anchor="w")
+        ttk.Label(f, text="Select Parent Folder:").pack(anchor="w")
+        
         self.path = ttk.Entry(f); self.path.pack(fill="x", pady=10)
         ttk.Button(f, text="Browse", command=self.browse).pack()
         
-        self.btn = tk.Button(f, text="GENERATE DOCUMENTATION", bg="#3dcd58", fg="white", font=("Arial", 11, "bold"), command=self.start, height=2)
+        self.btn = tk.Button(f, text="GENERATE ALL DOCUMENTATION", 
+                             bg="#3dcd58", fg="white", font=("Arial", 11, "bold"), 
+                             command=self.start)
         self.btn.pack(fill="x", pady=20)
         
-        self.log = scrolledtext.ScrolledText(f, height=18, bg="#1c1c1c", fg="#3dcd58"); self.log.pack(fill="both")
+        self.log = scrolledtext.ScrolledText(f, height=15, font=("Consolas", 9))
+        self.log.pack(fill="both", expand=True)
+        
         sys.stdout = self
 
-    def write(self, s):
-        self.log.insert(tk.END, s)
-        self.log.see(tk.END)
-        self.log.update_idletasks()
+    def write(self, txt):
+        if txt is not None:
+            self.log.insert(tk.END, str(txt))
+            self.log.see(tk.END)
 
-    def flush(self): pass
+    def flush(self):
+        pass
 
     def browse(self):
-        p = filedialog.askdirectory()
-        if p: self.path.delete(0, tk.END); self.path.insert(0, p)
+        directory = filedialog.askdirectory()
+        if directory:
+            self.path.delete(0, tk.END)
+            self.path.insert(0, directory)
 
     def start(self):
-        if not self.path.get(): return
+        folder = self.path.get().strip()
+        if not folder or not os.path.exists(folder):
+            print("!!! 请选择有效的路径。")
+            return
+        
         self.btn.config(state="disabled")
+        self.log.delete(1.0, tk.END)
         threading.Thread(target=self.work, daemon=True).start()
+
+    def process_folder(self, folder, summary_list):
+        """
+        处理单个文件夹。
+        如果生成成功，返回 True；如果没有代码或失败，返回 False。
+        """
+        curr_name = os.path.basename(folder)
+        base_title = f"{curr_name}_LLD"
+        local_code = ""
+        
+        # 1. 扫描代码文件
+        if not os.path.exists(folder): return False
+        files = [f for f in os.listdir(folder) if f.endswith(('.c', '.h'))]
+        if not files: return False 
+
+        print(f"\n>>> [子模块处理] 正在读取目录: {curr_name}...")
+        for f_name in files:
+            file_path = os.path.join(folder, f_name)
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f_obj:
+                    local_code += f"\n// SOURCE: {f_name}\n" + f_obj.read()
+            except Exception as e:
+                print(f"!!! 读取失败 {f_name}: {e}")
+
+        if not local_code.strip(): return False
+
+        # 2. 读取历史版本
+        context_md = "NONE"
+        base_md_path = os.path.join(folder, f"{base_title}.md")
+        if os.path.exists(base_md_path):
+            try:
+                with open(base_md_path, 'r', encoding='utf-8') as f:
+                    context_md = f.read()
+            except: pass
+
+        # 3. AI 生成局部 LLD
+        print(f">>> 正在请求 AI 分析模块细节: {curr_name}...")
+        new_md = self.ai.call_ai(local_code, curr_name, context_md)
+        
+        # 4. 导出
+        self.ai.archive_old_files(folder, base_title, context_md)
+        self.exporter.export(new_md, base_title, folder)
+        print(f"✅ 子模块文档已保存: {folder}/{base_title}.pdf")
+        
+        # 5. 存入摘要篮子
+        summary_list.append(f"Module Name: {curr_name}\nFunction Summary: {new_md[:400]}...")
+        return True
 
     def work(self):
         try:
-            folder = self.path.get().strip()
-            curr_name = os.path.basename(folder)
-            base_title = f"{curr_name}_LLD"
-            
-            # 1. 扫描代码与旧文档
-            local_code = ""
-            context_md = "NONE"
-            base_md_path = os.path.join(folder, f"{base_title}.md")
-            
-            if os.path.exists(base_md_path):
-                with open(base_md_path, 'r', encoding='utf-8') as f:
-                    context_md = f.read()
-                print(f">>> 发现历史版本文档...")
+            root_path = self.path.get().strip()
+            root_name = os.path.basename(root_path)
+            all_summaries = []
 
-            for f in os.listdir(folder):
-                if f.endswith(('.c', '.h')):
-                    with open(os.path.join(folder, f), 'r', encoding='utf-8', errors='ignore') as f_obj:
-                        local_code += f"\n// FILE: {f}\n" + f_obj.read()
-
-            if not local_code:
-                print("!!! 未发现 .c 或 .h 文件，跳过。")
-                return
-
-            # 2. 调用 AI
-            print(f">>> 正在请求 AI 分析: {curr_name}...")
-            new_md = self.ai.call_ai(local_code, curr_name, context_md)
+            print(f"🚀 --- 开始递归处理根目录: {root_name} ---")
             
-            # 3. 归档与导出
-            self.ai.archive_old_files(folder, base_title, context_md)
-            self.exporter.export(new_md, base_title, folder)
+            # 第一步：先看根目录下是否有代码，有则处理
+            self.process_folder(root_path, all_summaries)
+
+            # 第二步：遍历所有一级子目录并逐一处理
+            for item in os.listdir(root_path):
+                full_path = os.path.join(root_path, item)
+                if os.path.isdir(full_path):
+                    # 跳过归档目录
+                    if item.startswith("V_") or item == "archive": continue
+                    
+                    # 关键修改：在这里调用处理函数，生成子目录文档
+                    success = self.process_folder(full_path, all_summaries)
+                    if not success:
+                        print(f"--- 目录 {item} 中未发现代码文件，已跳过。")
+
+            # 第三步：如果篮子里有摘要，说明有多个模块，生成父目录架构文档
+            if len(all_summaries) > 0:
+                print(f"\n>>> --------------------------------------")
+                print(f">>> 正在进行根目录架构汇总分析: {root_name}")
+                print(f">>> 汇总模块数量: {len(all_summaries)}")
+                
+                parent_title = f"{root_name}_LLD"
+                p_context_md = "NONE"
+                p_md_path = os.path.join(root_path, f"{parent_title}.md")
+                if os.path.exists(p_md_path):
+                    try:
+                        with open(p_md_path, 'r', encoding='utf-8') as f:
+                            p_context_md = f.read()
+                    except: pass
+
+                # 调用汇总接口
+                parent_md = self.ai.call_ai_parent(root_name, all_summaries)
+                
+                # 归档并导出根目录报告
+                self.ai.archive_old_files(root_path, parent_title, p_context_md)
+                self.exporter.export(parent_md, parent_title, root_path)
+                print(f"✅ 根目录架构报告渲染完成: {parent_title}")
+
+            print(f"\n🎉 任务成功！所有文档已存至: {root_path}")
             
-            print(f"\n🎉 MISSION SUCCESS. Documents saved in: {folder}")
         except Exception as e:
-            print(f"\n❌ CRITICAL ERROR: {e}")
+            print(f"\n❌ 运行出错: {str(e)}")
         finally:
             self.btn.config(state="normal")
 
 if __name__ == "__main__":
-    # 禁用代理（可选，视环境而定）
-    for key in ['http_proxy', 'https_proxy', 'all_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']:
-        if key in os.environ: del os.environ[key]
-        
     root = tk.Tk()
-    App(root)
+    app = App(root)
     root.mainloop()
