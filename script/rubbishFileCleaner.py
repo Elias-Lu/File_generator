@@ -60,11 +60,11 @@ class CleanerApp:
         try:
             # 严格匹配我们生成的文件格式
             target_patterns = [
-                r".*_LLD\.md$",
-                r".*_LLD\.html$",
-                r".*_LLD\.pdf$",
-                r".*_LLD_V\d+\.\d+\.\d+\..*$", # 匹配 V0.0.1 备份
-                r".*_LLD_\d{8}_\d{6}\..*$"     # 匹配 时间戳 备份
+            r"^LLD_.*\.md$",
+            r"^LLD_.*\.html$",
+            r"^LLD_.*\.pdf$",
+            r"^LLD_.*_V\d+\.\d+\.\d+\..*$",
+                r"^LLD_.*_V_\d{8}_\d{6}\..*$"
             ]
 
             deleted_count = 0

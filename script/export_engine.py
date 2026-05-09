@@ -1,3 +1,4 @@
+# export_engine.py
 import os
 import datetime
 import markdown
@@ -66,22 +67,63 @@ class ExportEngine:
 </html>
 """
 
-    def export(self, md_body, title, folder):
-        date_str = datetime.date.today().strftime("%d-%b-%Y")
-        
-        # 1. 保存 Markdown
-        md_path = os.path.join(folder, f"{title}.md")
+    def save_md_only(self, md_body, md_path):
+        """仅保存 Markdown 文件，不生成 HTML/PDF。"""
+        os.makedirs(os.path.dirname(md_path), exist_ok=True)
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write(md_body)
-        
-        # 2. 生成 HTML
+
+    def md_to_html(self, md_path, html_path):
+        """将已有的 Markdown 文件转换为 HTML（不生成 PDF）。"""
+        with open(md_path, 'r', encoding='utf-8') as f:
+            md_body = f.read()
+        title = os.path.splitext(os.path.basename(md_path))[0]
+        date_str = datetime.date.today().strftime("%d-%b-%Y")
         html_content = markdown.markdown(md_body, extensions=['tables', 'fenced_code', 'toc', 'sane_lists'])
         full_html = self.HTML_TEMPLATE.replace("{title}", title).replace("{date}", date_str).replace("{content}", html_content)
-        html_path = os.path.join(folder, f"{title}.html")
+        os.makedirs(os.path.dirname(html_path), exist_ok=True)
         with open(html_path, 'w', encoding='utf-8') as f:
             f.write(full_html)
-        
-        # 3. 生成 PDF
+
+    def html_to_pdf(self, html_path, pdf_path):
+        """将 HTML 文件转换为 PDF（需要 playwright 支持）。"""
+        if not self.PDF_SUPPORT:
+            raise RuntimeError("Playwright not installed. Run: pip install playwright && playwright install chromium")
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto("file:///" + os.path.abspath(html_path).replace('\\', '/'))
+            try:
+                page.wait_for_function("window.mermaidRendered === true", timeout=45000)
+                page.wait_for_timeout(1000)
+            except:
+                pass
+            h_tpl = f'<div style="font-family:Nunito;font-size:8px;width:100%;padding:0 45px;display:flex;justify-content:space-between;border-bottom:1px solid #ddd;color:#666;"><span>LLD: {os.path.basename(pdf_path)}</span><span>Schneider Electric</span></div>'
+            f_tpl = '<div style="font-family:Nunito;font-size:8px;width:100%;text-align:center;color:#666;padding-top:5px;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>'
+            os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+            page.pdf(path=pdf_path, format="A4", print_background=True, display_header_footer=True,
+                     header_template=h_tpl, footer_template=f_tpl, margin={"top": "35mm", "bottom": "30mm"})
+            browser.close()
+
+    def export_to_paths(self, md_body, title, md_dir, html_dir, pdf_dir):
+        """兼容旧接口：同时保存 MD、HTML、PDF（旧逻辑保留，但 UI 已不再调用此方法）。"""
+        date_str = datetime.date.today().strftime("%d-%b-%Y")
+        os.makedirs(md_dir, exist_ok=True)
+        os.makedirs(html_dir, exist_ok=True)
+        if self.PDF_SUPPORT:
+            os.makedirs(pdf_dir, exist_ok=True)
+
+        md_path = os.path.join(md_dir, f"{title}.md")
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(md_body)
+
+        html_content = markdown.markdown(md_body, extensions=['tables', 'fenced_code', 'toc', 'sane_lists'])
+        full_html = self.HTML_TEMPLATE.replace("{title}", title).replace("{date}", date_str).replace("{content}", html_content)
+        html_path = os.path.join(html_dir, f"{title}.html")
+        with open(html_path, 'w', encoding='utf-8') as f:
+            f.write(full_html)
+
         if self.PDF_SUPPORT:
             try:
                 from playwright.sync_api import sync_playwright
@@ -92,13 +134,13 @@ class ExportEngine:
                     try:
                         page.wait_for_function("window.mermaidRendered === true", timeout=45000)
                         page.wait_for_timeout(1000)
-                    except: pass
-                    
+                    except:
+                        pass
                     h_tpl = f'<div style="font-family:Nunito;font-size:8px;width:100%;padding:0 45px;display:flex;justify-content:space-between;border-bottom:1px solid #ddd;color:#666;"><span>LLD: {title}</span><span>Schneider Electric</span></div>'
                     f_tpl = '<div style="font-family:Nunito;font-size:8px;width:100%;text-align:center;color:#666;padding-top:5px;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>'
-                    
-                    page.pdf(path=os.path.join(folder, f"{title}.pdf"), format="A4", print_background=True, display_header_footer=True, header_template=h_tpl, footer_template=f_tpl, margin={"top": "35mm", "bottom": "30mm"})
+                    pdf_path = os.path.join(pdf_dir, f"{title}.pdf")
+                    page.pdf(path=pdf_path, format="A4", print_background=True, display_header_footer=True,
+                             header_template=h_tpl, footer_template=f_tpl, margin={"top": "35mm", "bottom": "30mm"})
                     browser.close()
             except Exception as e:
                 print(f"PDF Error: {e}")
-                
